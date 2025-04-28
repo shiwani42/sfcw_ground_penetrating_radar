@@ -1,0 +1,102 @@
+clear all
+
+% Number of vertical pixels in the image
+N_vertical_pixels = 500;
+
+% Minimum frequency of the emitted chirp [Hz]
+% f_start = 24.75 * 10^9;
+f_start = 25 * 10^9;
+
+
+% Define experiment parameters
+semi_angle = 20;           % Semi-angle of the radiation lobe of the antenna
+radar_displacement_step = 0.014;      % RADAR displacement step [m]
+image_length = 4;              % Length of the focused image [m]
+scene_altitude = 0;     % Altitude of the scene relative to RADAR [m]
+
+% Constants
+c = 299792458;            % Speed of light [m/s]
+B = 222e6;   % Bandwidth of the emitted chirp [Hz]
+% B= 686e6;
+range_resolution = c / (2 * B);        % Range resolution of the radar [m]
+
+% Process raw data
+correction = load('Data\correctie2.txt');
+raw_data = load('Data\ach_final.txt');
+disp(size(raw_data))
+correction = correction';
+raw_data = raw_data';
+raw_data = raw_data - repmat(correction, 1, size(raw_data, 2));
+
+% raw_data = hilbert(raw_data);
+
+time_domain_matrix = fft(raw_data);
+useful_dimension = (size(time_domain_matrix, 1)) / 2 - 1;
+max_range = useful_dimension * range_resolution;
+range_vector = 0:range_resolution:image_length;
+time_domain_matrix = time_domain_matrix(1:useful_dimension, :);
+np = size(time_domain_matrix, 2);        % Number of measurement points
+image_width = radar_displacement_step * (np - 1);            % Width of the focused image [m]
+
+N_horizontal_pixels = N_vertical_pixels * image_width / image_length;
+
+% Display unfocused image
+figure
+imagesc(-radar_displacement_step*(np-1)/2:radar_displacement_step:radar_displacement_step*np/2,-range_vector,abs(time_domain_matrix(1:round(image_length/range_resolution),:))); colormap('gray')
+caxis([0 max(max(abs(time_domain_matrix)))]);
+title('Unfocused Image')
+xlabel('Azimuth [m]','FontSize',12); ylabel('Range [m]','FontSize',12);
+
+% SAR focusing
+% Create grid for scanned image [m]:
+x_vector = [-image_width/2:image_width/(N_horizontal_pixels-1):image_width/2];
+y_vector = [image_length:-image_length/(N_vertical_pixels-1):0];
+x_matrix = repmat(x_vector, length(y_vector), 1);
+y_matrix = (repmat(y_vector, length(x_vector), 1))';
+z_matrix = scene_altitude * ones(length(y_vector), length(x_vector));
+% Create vector of RADAR positions on axes [m]:
+AntX = [-radar_displacement_step*(np-1)/2:radar_displacement_step:radar_displacement_step*np/2];
+AntY = zeros(1, np);
+AntZ = zeros(1, np);
+
+%-------------------------- SAR Algorithm---------------------------------
+% Calculate distances in range for each element in the range profile [m]:
+range_vector_profile = linspace(0, useful_dimension-1, useful_dimension) * max_range / useful_dimension;
+% Initialize image:
+final_image = zeros(size(x_matrix));
+% Initialize vector for measuring execution time:
+t = zeros(1, np);
+% Process each pulse:
+for ii = 1:np
+    % Display time
+    if ii > 1
+        t_sofar = sum(t(1:(ii-1)));
+        t_est = (t_sofar * np / (ii-1) - t_sofar) / 60;
+        fprintf('Pulse %d out of %d, %.02f minutes until completion\n', ii, np, t_est);
+    else
+        fprintf('Pulse %d out of %d\n', ii, np);
+    end
+    tic
+    % Create vector of range profile:
+    rc = time_domain_matrix(:, ii);
+    % Calculate distance between RADAR and each pixel location [m]:
+    dR = sqrt((AntX(ii) - x_matrix).^2 + (AntY(ii) - y_matrix).^2 + (AntZ(ii) - z_matrix).^2);
+    % Calculate angle under which each pixel is seen [rad]:
+    angle = atan((abs(AntX(ii) - x_matrix))./(abs(AntY(ii) - y_matrix)));
+    % Calculate phase correction for each pixel:
+    phCorr = exp(1i * 4 * pi * f_start / c * dR);
+    % Determine pixels within the representable domain:
+    J = find(and(dR > min(range_vector_profile), dR < max(range_vector_profile)));
+    % Determine pixels visible by the antenna (due to real aperture):
+    I = J(find((angle(J)) < (semi_angle * pi / 180)));
+    % Create final image using linear interpolation:
+    final_image(I) = final_image(I) + interp1(range_vector_profile, rc, dR(I), 'linear') .* phCorr(I);
+    % Determine execution time for each processed pulse:
+    t(ii) = toc;
+end
+% Display focused image:
+figure;
+imagesc(x_vector + max(x_vector), -y_vector, abs(final_image)); %colormap('gray')
+title('Focused Image')
+xlabel('x [m]','FontSize',12); ylabel('-y [m]','FontSize',12);
+caxis([0 max(max(abs(final_image)))]);

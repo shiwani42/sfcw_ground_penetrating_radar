@@ -1,0 +1,74 @@
+name: Docs Added
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check-submission:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Check for required top-level folders and files
+        run: |
+          echo "📁 Checking for required folders and files..."
+
+          REQUIRED_FOLDERS=("src" "pcb" "3d_models" "others" "reports")
+          MISSING=0
+
+          for folder in "${REQUIRED_FOLDERS[@]}"; do
+            if [ ! -d "$folder" ]; then
+              echo "❌ Missing required folder: $folder"
+              MISSING=1
+            else
+              echo "✅ Found folder: $folder"
+            fi
+          done
+
+          if [ ! -f "bom.xls" ]; then
+            echo "❌ Missing required file: bom.xls"
+            MISSING=1
+          else
+            echo "✅ Found file: bom.xls"
+          fi
+
+          if [ ! -f "README.md" ]; then
+            echo "❌ Missing top-level README.md"
+            MISSING=1
+          else
+            echo "✅ Found top-level README.md"
+          fi
+
+          if [ $MISSING -eq 1 ]; then
+            echo "❌ One or more required folders/files are missing."
+            exit 1
+          fi
+
+      - name: Check for README.md in subfolders (except /reports)
+        run: |
+          echo "📄 Checking README.md presence in subfolders..."
+
+          CHECK_DIRS=("src" "pcb" "3d_models" "others")
+          MISSING=0
+
+          for folder in "${CHECK_DIRS[@]}"; do
+            echo "🔍 Checking $folder/"
+            for sub in "$folder"/*/; do
+              [ -d "$sub" ] || continue
+              if [ ! -f "${sub}README.md" ]; then
+                echo "❌ Missing README.md in $sub"
+                MISSING=1
+              else
+                echo "✅ Found README.md in $sub"
+              fi
+            done
+          done
+
+          if [ "$MISSING" == "1" ]; then
+            echo "❌ README.md missing in one or more subfolders."
+            exit 1
+          fi
